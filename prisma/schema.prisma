@@ -1,0 +1,99 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id                 String    @id @default(uuid())
+  name               String
+  whopSubscriptionId String?   @unique 
+  tier               String    @default("INACTIVE") 
+  usedPromoCode      String?   
+  accessExpiresAt    DateTime? 
+  
+  // Performance & Tracking
+  revenueRecovered   Int       @default(0) 
+  performanceFeeOwed Int       @default(0) 
+  pdfsGenerated      Int       @default(0)
+  
+  // The AES-256 Vault & Handshake Secrets
+  encryptedStripeKey     String?
+  encryptedWebhookSecret String?   // <--- UPDATED: Renamed to ensure we encrypt it in the vault
+  
+  users              User[]
+  payments           Payment[]
+  disputes           Dispute[]
+  createdAt          DateTime  @default(now())
+}
+
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  passwordHash   String       
+  role           String       @default("USER") 
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  @@index([organizationId])
+}
+
+model Payment {
+  id                String       @id @default(uuid())
+  stripeChargeId    String       @unique
+  amount            Int          
+  status            String       
+  
+  // Fingerprint & IP Data (The Golden Trio)
+  customerIp        String?
+  deviceFingerprint String?
+  location          String?
+  
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  disputes          Dispute[]
+  createdAt         DateTime     @default(now())
+  @@index([organizationId])
+}
+
+model Dispute {
+  id               String       @id @default(uuid())
+  stripeId         String       @unique
+  reason           String       
+  status           String       
+  processingStatus String       @default("PENDING")
+  evidencePdfUrl   String?      
+  
+  paymentId        String
+  payment          Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt        DateTime     @default(now())
+  @@index([organizationId])
+  @@index([processingStatus])
+}
+
+model TrackingIntel {
+  id                String   @id @default(uuid())
+  stripeSessionId   String   @unique
+  ipAddress         String
+  geolocation       String?
+  deviceFingerprint String
+  createdAt         DateTime @default(now())
+}
+
+model PreRecordedEvidence {
+  id             String   @id @default(uuid())
+  stripeChargeId String   @unique
+  organizationId String
+  customerName   String?
+  customerEmail  String?
+  billingAddress String?
+  ipAddress      String?
+  geoData        String?
+  createdAt      DateTime @default(now())
+}

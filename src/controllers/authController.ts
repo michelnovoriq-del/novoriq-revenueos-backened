@@ -1,0 +1,87 @@
+import { Request, Response } from 'express';
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+
+const prisma = new PrismaClient();
+
+export const login = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { email, password } = req.body;
+        
+        // Find the user
+        const user = await prisma.user.findUnique({ where: { email } });
+        if (!user) { 
+            res.status(401).json({ error: 'Invalid credentials' }); 
+            return; 
+        }
+
+        // Verify the hash
+        const isValid = await bcrypt.compare(password, user.passwordHash);
+        if (!isValid) { 
+            res.status(401).json({ error: 'Invalid credentials' }); 
+            return; 
+        }
+
+        // Generate the VIP Pass (JWT)
+        const token = jwt.sign(
+            { userId: user.id, organizationId: user.organizationId, role: user.role },
+            process.env.JWT_SECRET as string,
+            { expiresIn: '24h' }
+        );
+
+        res.json({ token, organizationId: user.organizationId });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+// NEW: The Registration Engine
+export const register = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { email, password, organizationName } = req.body;
+
+        // 1. Ensure the user doesn't already exist
+        const existingUser = await prisma.user.findUnique({ where: { email } });
+        if (existingUser) {
+            res.status(400).json({ error: 'User already exists with this email' });
+            return;
+        }
+
+        // 2. Securely hash the password
+        const saltRounds = 10;
+        const passwordHash = await bcrypt.hash(password, saltRounds);
+
+        // 3. Fallback for organization name if the frontend didn't send one
+        const orgName = organizationName || `${email.split('@')[0]}'s Organization`;
+
+        // 4. Create the User AND their Organization in one database transaction
+        const newUser = await prisma.user.create({
+            data: {
+                email,
+                passwordHash,
+                role: 'ADMIN', // The creator is always the Admin of their new org
+                organization: {
+                    create: {
+                        name: orgName,
+                        tier: 'INACTIVE', // Default tier before payment or promo code
+                    }
+                }
+            }
+        });
+
+        // 5. Instantly log them in by generating a token
+        const token = jwt.sign(
+            { userId: newUser.id, organizationId: newUser.organizationId, role: newUser.role },
+            process.env.JWT_SECRET as string,
+            { expiresIn: '24h' }
+        );
+
+        // 6. Send the token back to the frontend
+        res.status(201).json({ token, organizationId: newUser.organizationId });
+    } catch (error) {
+        console.error('[Register Error]:', error);
+        res.status(500).json({ error: 'Internal server error during registration' });
+    }
+};
