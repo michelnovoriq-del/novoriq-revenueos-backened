@@ -125,7 +125,8 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
             let targetTier = 'PRO'; // Default to Pro
             let expiresAt: Date | null = null;
 
-            if (planId === 'plan_12uLHFgtctUFl' || planId === 'plan_V3eDZlxhqz03e') { // E2E/test plans
+            // [UPDATED] Injecting the new E2E test plan (plan_rUbJAjG7Mt0mv) alongside existing legacy test IDs
+            if (planId === 'plan_rUbJAjG7Mt0mv' || planId === 'plan_12uLHFgtctUFl' || planId === 'plan_V3eDZlxhqz03e') { 
                 targetTier = 'TIER_2'; // Map test plan to Pro for testing
                 console.log("[Whop Protocol] Test Plan Detected. Bypassing commercial locks.");
             } else if (planId === 'plan_g5k8i3tfPkASV') { // $10 Beta

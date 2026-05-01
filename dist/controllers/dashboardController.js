@@ -259,7 +259,7 @@ const handleStripeWebhook = async (req, res) => {
     // 🛠️ SLEDGEHAMMER FIX 1: Force TypeScript to ignore the string[] header warning
     const sig = req.headers['stripe-signature'];
     // 1. Extract dynamic ID from URL parameters
-    const targetOrgId = req.params.orgId; // FIXED TYPE
+    const targetOrgId = req.params.orgId;
     if (!targetOrgId) {
         console.error(`[❌] Webhook Error: Missing targetOrgId in URL path.`);
         res.status(400).send("Bad Request: Missing Org ID");
@@ -267,16 +267,20 @@ const handleStripeWebhook = async (req, res) => {
     }
     let event;
     try {
-        // 2. Look up the specific organization to find their unique Webhook Secret
+        // 2. Look up the specific organization to find their unique secrets
         const org = await prisma.organization.findUnique({ where: { id: targetOrgId } });
-        if (!org || !org.encryptedWebhookSecret) {
-            console.error(`[❌] Webhook Error: No webhook secret found for Org: ${targetOrgId}`);
+        // Ensure BOTH the webhook secret and Stripe key exist
+        if (!org || !org.encryptedWebhookSecret || !org.encryptedStripeKey) {
+            console.error(`[❌] Webhook Error: Missing keys for Org: ${targetOrgId}`);
             res.status(400).send("Webhook configuration missing.");
             return;
         }
-        // 3. Verify the signature using THEIR specific decrypted secret
+        // 3. THE FIX: Decrypt BOTH the Webhook Secret AND the Stripe Key
         const rawWebhookSecret = decryptData(org.encryptedWebhookSecret);
-        const stripeUtils = new stripe_1.default('', { apiVersion: '2026-04-22.dahlia' });
+        const rawStripeSecretKey = decryptData(org.encryptedStripeKey);
+        // 4. Initialize Stripe securely with the REAL key, not an empty string
+        const stripeUtils = new stripe_1.default(rawStripeSecretKey, { apiVersion: '2026-04-22.dahlia' });
+        // 5. Verify the signature securely
         // 🛠️ SLEDGEHAMMER FIX 2: Force TypeScript to accept the raw body buffer
         event = stripeUtils.webhooks.constructEvent(req.body, sig, rawWebhookSecret);
     }
@@ -285,7 +289,7 @@ const handleStripeWebhook = async (req, res) => {
         res.status(400).send(`Webhook Error: Signature mismatch`);
         return;
     }
-    // 4. Execute Business Logic using the dynamic targetOrgId
+    // 6. Execute Business Logic using the dynamic targetOrgId
     try {
         switch (event.type) {
             case 'charge.succeeded': {
@@ -298,7 +302,7 @@ const handleStripeWebhook = async (req, res) => {
                         stripeChargeId: charge.id,
                         amount: charge.amount,
                         status: 'succeeded',
-                        organizationId: targetOrgId, // <--- DYNAMIC ORG ID
+                        organizationId: targetOrgId,
                         customerIp: charge.payment_method_details?.card?.network_transaction_id || null,
                         location: charge.billing_details?.address?.country || null
                     }
@@ -308,7 +312,7 @@ const handleStripeWebhook = async (req, res) => {
                     update: {},
                     create: {
                         stripeChargeId: charge.id,
-                        organizationId: targetOrgId, // <--- DYNAMIC ORG ID
+                        organizationId: targetOrgId,
                         customerName: charge.billing_details?.name || 'Unknown',
                         customerEmail: charge.billing_details?.email || charge.receipt_email || 'Unknown',
                         billingAddress: charge.billing_details?.address?.line1 || 'Not Provided',
@@ -359,7 +363,7 @@ const handleStripeWebhook = async (req, res) => {
                         reason: dispute.reason,
                         status: dispute.status,
                         paymentId: paymentRecord.id,
-                        organizationId: targetOrgId, // <--- DYNAMIC ORG ID
+                        organizationId: targetOrgId,
                         processingStatus: 'COMPLETED',
                         evidencePdfUrl: pdfPath
                     }

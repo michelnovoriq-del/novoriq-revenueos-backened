@@ -10,6 +10,7 @@ import dashboardRoutes from './routes/dashboardRoutes';
 import adminRoutes from './routes/adminRoutes';
 import trackingRoutes from './routes/trackingRoutes';
 import promoRoutes from './routes/promoRoutes'; 
+import billingRoutes from './routes/billingRoutes';
 
 dotenv.config();
 
@@ -64,6 +65,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/organizations', orgRoutes);
 app.use('/api/webhooks', webhookRoutes); 
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/billing', billingRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/track', trackingRoutes); 
 app.use('/api/promo', promoRoutes); 
