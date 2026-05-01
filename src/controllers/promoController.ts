@@ -29,6 +29,7 @@ export const redeemPromo = async (req: Request, res: Response): Promise<void> =>
             where: { id: organizationId },
             data: {
                 tier: 'ALL_TIERS',
+                status: 'ACTIVE',
                 usedPromoCode: code
             }
         });

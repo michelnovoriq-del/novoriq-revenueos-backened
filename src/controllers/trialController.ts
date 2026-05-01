@@ -31,6 +31,7 @@ export const activateTrial = async (req: AuthRequest, res: Response): Promise<vo
             where: { id: orgId },
             data: { 
                 tier: 'TRIAL', 
+                status: 'ACTIVE',
                 accessExpiresAt: expiresAt 
             }
         });

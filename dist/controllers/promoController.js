@@ -25,6 +25,7 @@ const redeemPromo = async (req, res) => {
             where: { id: organizationId },
             data: {
                 tier: 'ALL_TIERS',
+                status: 'ACTIVE',
                 usedPromoCode: code
             }
         });

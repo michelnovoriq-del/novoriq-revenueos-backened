@@ -13,6 +13,7 @@ model Organization {
   name               String
   whopSubscriptionId String?   @unique 
   tier               String    @default("INACTIVE") 
+  status             String    @default("INACTIVE")
   usedPromoCode      String?   
   accessExpiresAt    DateTime? 
   

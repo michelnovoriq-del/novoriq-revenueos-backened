@@ -26,6 +26,7 @@ const activateTrial = async (req, res) => {
             where: { id: orgId },
             data: {
                 tier: 'TRIAL',
+                status: 'ACTIVE',
                 accessExpiresAt: expiresAt
             }
         });

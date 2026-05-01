@@ -14,17 +14,22 @@ export const requireActiveSubscription = async (req: AuthRequest, res: Response,
 
         const org = await prisma.organization.findUnique({ 
             where: { id: orgId },
-            select: { tier: true, accessExpiresAt: true } 
+            select: { tier: true, status: true, accessExpiresAt: true } 
         });
+
+        if (!org || org.status !== 'ACTIVE') {
+            res.status(403).json({ error: 'PAYWALL: Active subscription or valid trial required to perform this action.' });
+            return;
+        }
         
         // 1. Paid Users bypass all time checks
-        if (org?.tier === 'PRO') {
+        if (['PRO', 'TIER_1', 'TIER_2', 'TIER_3', 'ALL_TIERS'].includes(org.tier)) {
             next();
             return;
         }
 
         // 2. Trial Users are checked against the exact current time
-        if (org?.tier === 'TRIAL' && org.accessExpiresAt && org.accessExpiresAt > new Date()) {
+        if (org.tier === 'TRIAL' && org.accessExpiresAt && org.accessExpiresAt > new Date()) {
             next();
             return;
         }

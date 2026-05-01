@@ -4,124 +4,142 @@ import crypto from 'crypto';
 
 const prisma = new PrismaClient();
 
+/**
+ * NOVORIQ REVENUE OS | WHOP BILLING NEXUS
+ * ---------------------------------------
+ * Handles real-time provisioning, tier upgrades, and access revocation.
+ */
 export const handleWhopWebhook = async (req: Request, res: Response): Promise<void> => {
-    console.log("[Whop Protocol] Incoming payload detected...");
+    console.log("[Whop Protocol] Incoming high-priority payload detected...");
 
     try {
         // --- 1. CRYPTOGRAPHIC SIGNATURE VERIFICATION ---
-        const signature = req.headers['x-whop-signature'] as string;
-        
-        // Using the exact raw byte string from our buffer middleware
-        const payloadString = (req as any).rawBody.toString(); 
+        const signature = req.headers['x-whop-signature'];
+        const rawBody = (req as any).rawBody as Buffer | undefined;
         const secret = process.env.WHOP_WEBHOOK_SECRET;
 
         if (!secret) {
-            console.error("[CRITICAL] WHOP_WEBHOOK_SECRET is missing.");
+            console.error("[CRITICAL] WHOP_WEBHOOK_SECRET is missing from environment.");
             res.status(500).json({ error: "Server configuration error" });
+            return;
+        }
+
+        if (!rawBody || !Buffer.isBuffer(rawBody)) {
+            console.warn("[WARNING] Security Breach: Missing raw webhook body.");
+            res.status(400).json({ error: "Missing raw body" });
+            return;
+        }
+
+        const signatureValue = Array.isArray(signature) ? signature[0] : signature;
+        if (!signatureValue) {
+            console.warn("[WARNING] Security Breach: Missing webhook signature.");
+            res.status(401).json({ error: "Missing signature" });
             return;
         }
 
         const expectedSignature = crypto
             .createHmac('sha256', secret)
-            .update(payloadString)
+            .update(rawBody)
             .digest('hex');
 
-        // Allow bypassing signature ONLY if testing locally
-        if (signature !== expectedSignature && secret !== "LOCAL_TEST_SECRET") {
-            console.warn("[WARNING] Unauthorized webhook attempt: Signature mismatch");
+        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+        const receivedBuffer = Buffer.from(signatureValue, 'hex');
+        const isLocalSignatureBypass = secret === "LOCAL_TEST_SECRET" && process.env.NODE_ENV !== 'production';
+        const isValidSignature = expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+
+        if (!isValidSignature && !isLocalSignatureBypass) {
+            console.warn("[WARNING] Security Breach: Unauthorized webhook signature mismatch.");
             res.status(401).json({ error: "Invalid signature" });
             return;
         }
 
-        // --- 2. BUSINESS LOGIC ---
+        // --- 2. PAYLOAD PARSING ---
         const payload = req.body;
         const action = payload.action || payload.type;
-        
-        // PATH A: PAYMENT SECURED & ACCOUNT PROVISIONING
-        if (action === 'membership.went_valid' || action === 'payment.succeeded') {
+        const data = payload.data || {};
+
+        // --- 3. PATH A: ACCESS PROVISIONING ---
+        if (action === 'membership.went_active' || action === 'membership.went_valid' || action === 'payment.succeeded') {
             
-            // Extract core data
-            let orgId = payload.data?.metadata?.organizationId;
-            const userId = payload.data?.metadata?.userId; 
-            const subscriptionId = payload.data?.id;
-            const planId = payload.data?.plan?.id || payload.data?.product?.id; 
+            // PRIORITY: Use external_id (passed via query param) or fallback to metadata
+            let orgId = data.external_id || data.metadata?.organizationId;
+            const userId = data.metadata?.userId; 
+            const subscriptionId = data.id;
+            const planId = data.plan?.id || data.product?.id; 
             
-            const customerEmail = payload.data?.email || payload.data?.user?.email || 'unknown@whop.com';
-            const planPurchased = payload.data?.plan?.name || payload.data?.product?.name || 'Enterprise Tier';
+            const customerEmail = data.email || data.user?.email || 'unknown@whop.com';
+            console.log(`[Whop Protocol] Capital Secured | Plan ID: ${planId} | Email: ${customerEmail}`);
 
-            console.log(`[Whop Protocol] Payment secured from: ${customerEmail}. Plan: ${planPurchased}`);
+            // 1. DETERMINISTIC TIER MAPPING
+            let targetTier = 'PRO'; // Default to Pro
+            let expiresAt: Date | null = null;
 
-            // 1. Determine the exact internal Tier
-            let newTier = 'PRO'; 
-            let expiresAt = null;
-
-            if (planId === 'plan_g5k8i3tfPkASV') {
-                newTier = 'TRIAL';
+            if (planId === 'plan_V3eDZlxhqz03e') { // 🧪 YOUR TEST PLAN
+                targetTier = 'TIER_2'; // Map test plan to Pro for testing
+                console.log("[Whop Protocol] Test Plan Detected. Bypassing commercial locks.");
+            } else if (planId === 'plan_g5k8i3tfPkASV') { // $10 Beta
+                targetTier = 'TRIAL';
                 expiresAt = new Date();
                 expiresAt.setHours(expiresAt.getHours() + 48);
-            } else if (planId === 'plan_pJpWvIqcYCRvV') {
-                newTier = 'TIER_1';
-            } else if (planId === 'plan_rE4Rj9g9t8RNH') {
-                newTier = 'TIER_2';
-            } else if (planId === 'plan_My5qZYNCRlcgr') {
-                newTier = 'TIER_3'; // God Mode
+            } else if (planId === 'plan_pJpWvIqcYCRvV') { // $199
+                targetTier = 'TIER_1';
+            } else if (planId === 'plan_rE4Rj9g9t8RNH') { // $399
+                targetTier = 'TIER_2';
+            } else if (planId === 'plan_My5qZYNCRlcgr') { // $799
+                targetTier = 'TIER_3';
             }
 
-            // 2. Generate the VIP Invite Code (Cold Traffic / Backup Key)
+            // 2. GENERATE VIP INVITE KEY (Legacy/Offline fallback)
             const rawCode = crypto.randomBytes(4).toString('hex').toUpperCase();
             const inviteCode = `NVQ-${rawCode}-VIP`;
 
-            await prisma.inviteCode.create({
-                data: {
-                    code: inviteCode,
-                    tier: newTier, 
-                    isUsed: false,
-                    assignedEmail: customerEmail
-                }
-            });
-            console.log(`[Whop Protocol] SUCCESS: VIP Key Generated -> ${inviteCode}`);
-
-            // 3. Direct Engine Upgrade (If they checked out from inside the app)
+            // 3. ATOMIC UPGRADE
+            // If we don't have an OrgId but have a UserId, resolve the OrgId
             if (!orgId && userId) {
                 const user = await prisma.user.findUnique({ where: { id: userId } });
                 if (user) orgId = user.organizationId;
             }
 
             if (orgId) {
-                await prisma.organization.update({
-                    where: { id: orgId },
-                    data: { tier: newTier, whopSubscriptionId: subscriptionId, accessExpiresAt: expiresAt }
-                });
-                console.log(`[💎] Whop Receipt Validated | User: ${userId || 'SYSTEM'} | Org: ${orgId} | Upgraded to: ${newTier}`);
+                await prisma.$transaction([
+                    prisma.inviteCode.create({
+                        data: { code: inviteCode, tier: targetTier, isUsed: false, assignedEmail: customerEmail }
+                    }),
+                    prisma.organization.update({
+                        where: { id: orgId },
+                        data: { 
+                            tier: targetTier, 
+                            status: 'ACTIVE', // 🔓 THE MASTER KEY
+                            whopSubscriptionId: subscriptionId, 
+                            accessExpiresAt: expiresAt 
+                        }
+                    })
+                ]);
+                console.log(`[💎] ENGINE UNLOCKED | Org: ${orgId} | Tier: ${targetTier}`);
             } else {
-                console.log(`[Whop Protocol] Cold traffic purchase. User must apply Invite Code on registration to unlock OS.`);
+                await prisma.inviteCode.create({
+                    data: { code: inviteCode, tier: targetTier, isUsed: false, assignedEmail: customerEmail }
+                });
+                console.log(`[Whop Protocol] Cold traffic detected. Invite code ${inviteCode} mailed to ${customerEmail}.`);
             }
         }
 
-        // PATH B: CANCELLATIONS & DOWNGRADES
+        // --- 4. PATH B: ACCESS REVOCATION ---
         if (action === 'membership.went_invalid') {
-            let orgId = payload.data?.metadata?.organizationId;
-            const userId = payload.data?.metadata?.userId;
-            
-            if (!orgId && userId) {
-                const user = await prisma.user.findUnique({ where: { id: userId } });
-                if (user) orgId = user.organizationId;
-            }
-
+            const orgId = data.external_id || data.metadata?.organizationId;
             if (orgId) {
                 await prisma.organization.update({
                     where: { id: orgId },
-                    data: { tier: 'INACTIVE', accessExpiresAt: null }
+                    data: { status: 'INACTIVE', tier: 'INACTIVE', accessExpiresAt: null }
                 });
-                console.log(`[⚠️] Whop Downgrade | User: ${userId || 'SYSTEM'} | Org: ${orgId} | Locked.`);
+                console.log(`[⚠️] ENGINE LOCKED | Access revoked for Org: ${orgId}`);
             }
         }
 
-        // Always return 200 OK immediately so Whop doesn't retry the webhook
         res.status(200).json({ received: true });
 
     } catch (error) {
-        console.error("[CRITICAL] Webhook processing failed:", error);
-        res.status(400).json({ error: 'Webhook handler failed' });
+        console.error("[CRITICAL] Nexus Handshake Failed:", error);
+        res.status(400).json({ error: 'Internal Nexus Failure' });
     }
 };
