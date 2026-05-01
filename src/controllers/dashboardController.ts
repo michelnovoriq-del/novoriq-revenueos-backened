@@ -273,7 +273,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     const sig = req.headers['stripe-signature'] as any; 
     
     // 1. Extract dynamic ID from URL parameters
-    const targetOrgId = req.params.orgId as string; // FIXED TYPE
+    const targetOrgId = req.params.orgId as string; 
 
     if (!targetOrgId) {
         console.error(`[❌] Webhook Error: Missing targetOrgId in URL path.`);
@@ -284,19 +284,24 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     let event: any; 
 
     try {
-        // 2. Look up the specific organization to find their unique Webhook Secret
+        // 2. Look up the specific organization to find their unique secrets
         const org = await prisma.organization.findUnique({ where: { id: targetOrgId } });
         
-        if (!org || !org.encryptedWebhookSecret) {
-            console.error(`[❌] Webhook Error: No webhook secret found for Org: ${targetOrgId}`);
+        // Ensure BOTH the webhook secret and Stripe key exist
+        if (!org || !org.encryptedWebhookSecret || !org.encryptedStripeKey) {
+            console.error(`[❌] Webhook Error: Missing keys for Org: ${targetOrgId}`);
             res.status(400).send("Webhook configuration missing.");
             return;
         }
 
-        // 3. Verify the signature using THEIR specific decrypted secret
+        // 3. THE FIX: Decrypt BOTH the Webhook Secret AND the Stripe Key
         const rawWebhookSecret = decryptData(org.encryptedWebhookSecret);
-        const stripeUtils = new Stripe('', { apiVersion: '2026-04-22.dahlia' as any });
-        
+        const rawStripeSecretKey = decryptData(org.encryptedStripeKey);
+
+        // 4. Initialize Stripe securely with the REAL key, not an empty string
+        const stripeUtils = new Stripe(rawStripeSecretKey, { apiVersion: '2026-04-22.dahlia' as any });
+
+        // 5. Verify the signature securely
         // 🛠️ SLEDGEHAMMER FIX 2: Force TypeScript to accept the raw body buffer
         event = stripeUtils.webhooks.constructEvent(req.body as any, sig, rawWebhookSecret);
 
@@ -306,7 +311,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
         return;
     }
 
-    // 4. Execute Business Logic using the dynamic targetOrgId
+    // 6. Execute Business Logic using the dynamic targetOrgId
     try {
         switch (event.type) {
             
@@ -321,7 +326,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                         stripeChargeId: charge.id as string,
                         amount: charge.amount,
                         status: 'succeeded',
-                        organizationId: targetOrgId as string, // <--- DYNAMIC ORG ID
+                        organizationId: targetOrgId as string, 
                         customerIp: (charge.payment_method_details?.card?.network_transaction_id as string) || null,
                         location: (charge.billing_details?.address?.country as string) || null
                     }
@@ -332,7 +337,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                     update: {},
                     create: {
                         stripeChargeId: charge.id as string,
-                        organizationId: targetOrgId as string, // <--- DYNAMIC ORG ID
+                        organizationId: targetOrgId as string, 
                         customerName: (charge.billing_details?.name as string) || 'Unknown',
                         customerEmail: (charge.billing_details?.email as string) || (charge.receipt_email as string) || 'Unknown',
                         billingAddress: (charge.billing_details?.address?.line1 as string) || 'Not Provided',
@@ -391,7 +396,7 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                         reason: dispute.reason as string,
                         status: dispute.status as string,
                         paymentId: paymentRecord.id,
-                        organizationId: targetOrgId as string, // <--- DYNAMIC ORG ID
+                        organizationId: targetOrgId as string, 
                         processingStatus: 'COMPLETED',
                         evidencePdfUrl: pdfPath
                     }
