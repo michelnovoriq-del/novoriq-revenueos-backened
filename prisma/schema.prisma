@@ -97,3 +97,13 @@ model PreRecordedEvidence {
   geoData        String?
   createdAt      DateTime @default(now())
 }
+
+model InviteCode {
+  id            String   @id @default(uuid())
+  code          String   @unique
+  tier          String   // e.g., "TRIAL", "TIER_1", "PRO"
+  isUsed        Boolean  @default(false)
+  assignedEmail String?  // Optional: lock code to the buyer's email
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

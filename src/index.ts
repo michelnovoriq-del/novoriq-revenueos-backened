@@ -19,7 +19,18 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet()); 
 
 // Allowed origins: Frontend, Localhost, and any Merchant Website embedding the tracking script
-app.use(cors({ origin: '*' }));
+const allowedOrigins = [ // [CODEX PATCH]
+    'http://localhost:3000', // [CODEX PATCH]
+    process.env.FRONTEND_URL || 'https://novoriq-dashboard.netlify.app', // [CODEX PATCH]
+]; // [CODEX PATCH]
+
+app.use(cors({ // [CODEX PATCH]
+    origin: (origin, callback) => { // [CODEX PATCH]
+        if (!origin || allowedOrigins.includes(origin)) return callback(null, true); // [CODEX PATCH]
+        return callback(new Error('CORS origin denied by Revenue OS policy')); // [CODEX PATCH]
+    }, // [CODEX PATCH]
+    credentials: true, // [CODEX PATCH]
+})); // [CODEX PATCH]
 
 // 1. STRIPE RAW EXEMPTION (Runs first to completely bypass JSON parsing for Stripe)
 app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeRoutes);
