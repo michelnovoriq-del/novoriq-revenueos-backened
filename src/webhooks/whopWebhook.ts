@@ -147,6 +147,18 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
             const rawCode = crypto.randomBytes(4).toString('hex').toUpperCase();
             const inviteCode = `NVQ-${rawCode}-VIP`;
 
+            // --- 🚨 THE EMAIL BRIDGE (NEW FALLBACK) ---
+            // If Whop strips the external_id, bridge the identity using the verified email
+            if (!orgId && customerEmail && customerEmail !== 'unknown@whop.com') {
+                const existingUser = await prisma.user.findUnique({ 
+                    where: { email: customerEmail } 
+                });
+                if (existingUser && existingUser.organizationId) {
+                    orgId = existingUser.organizationId;
+                    console.log(`[Whop Protocol] Identity Bridged! Matched ${customerEmail} to Org: ${orgId}`);
+                }
+            }
+
             // 3. ATOMIC UPGRADE
             // If we don't have an OrgId but have a UserId, resolve the OrgId
             if (!orgId && userId) {
