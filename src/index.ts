@@ -18,19 +18,30 @@ const PORT = process.env.PORT || 3000;
 
 app.use(helmet()); 
 
-// Allowed origins: Frontend, Localhost, and any Merchant Website embedding the tracking script
-const allowedOrigins = [ // [CODEX PATCH]
-    'http://localhost:3000', // [CODEX PATCH]
-    process.env.FRONTEND_URL || 'https://novoriq-dashboard.netlify.app', // [CODEX PATCH]
-]; // [CODEX PATCH]
+// [FIXED] Updated to include your actual live production URL
+const allowedOrigins = [
+    'http://localhost:3000',
+    'https://novoriqrevenueos.netlify.app', // Your actual live frontend
+    'https://novoriq-dashboard.netlify.app', // Backup legacy URL
+    'https://novoriqrevenueosapi.onrender.com' // Allow the API to talk to itself
+];
 
-app.use(cors({ // [CODEX PATCH]
-    origin: (origin, callback) => { // [CODEX PATCH]
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true); // [CODEX PATCH]
-        return callback(new Error('CORS origin denied by Revenue OS policy')); // [CODEX PATCH]
-    }, // [CODEX PATCH]
-    credentials: true, // [CODEX PATCH]
-})); // [CODEX PATCH]
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps, Stripe/Whop webhooks, or curl)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.error(`[CORS Blocked] Unauthorized origin attempted access: ${origin}`);
+            callback(new Error('CORS origin denied by Revenue OS policy'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-whop-signature']
+}));
 
 // 1. STRIPE RAW EXEMPTION (Runs first to completely bypass JSON parsing for Stripe)
 app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeRoutes);
