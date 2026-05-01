@@ -40,7 +40,14 @@ app.use(cors({
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-whop-signature']
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'x-whop-signature',
+        'webhook-id',
+        'webhook-signature',
+        'webhook-timestamp'
+    ]
 }));
 
 // 1. STRIPE RAW EXEMPTION (Runs first to completely bypass JSON parsing for Stripe)

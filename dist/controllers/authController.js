@@ -37,6 +37,15 @@ exports.login = login;
 const register = async (req, res) => {
     try {
         const { email, password, organizationName } = req.body;
+        if (!email || !password) {
+            res.status(400).json({ error: 'Email and password are required' });
+            return;
+        }
+        if (!process.env.JWT_SECRET) {
+            console.error('[Register Error]: JWT_SECRET is missing from environment.');
+            res.status(500).json({ error: 'Server authentication configuration error' });
+            return;
+        }
         // 1. Ensure the user doesn't already exist
         const existingUser = await prisma.user.findUnique({ where: { email } });
         if (existingUser) {

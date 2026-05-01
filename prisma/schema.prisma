@@ -36,6 +36,7 @@ model User {
   id             String       @id @default(uuid())
   email          String       @unique
   passwordHash   String       
+  status         String       @default("ACTIVE")
   role           String       @default("USER") 
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)

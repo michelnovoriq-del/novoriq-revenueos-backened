@@ -4,6 +4,59 @@ import crypto from 'crypto';
 
 const prisma = new PrismaClient();
 
+const getHeaderValue = (header: string | string[] | undefined): string | undefined => {
+    return Array.isArray(header) ? header[0] : header;
+};
+
+const timingSafeStringEqual = (left: string, right: string): boolean => {
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const getStandardWebhookSecret = (secret: string): Buffer => {
+    if (secret.startsWith('whsec_')) {
+        return Buffer.from(secret.slice('whsec_'.length), 'base64');
+    }
+
+    return Buffer.from(secret, 'utf8');
+};
+
+const parseStandardWebhookSignatures = (signatureHeader: string): string[] => {
+    return signatureHeader
+        .split(/\s+/)
+        .flatMap((part) => part.split(','))
+        .map((part) => part.trim())
+        .filter((part) => part && part !== 'v1');
+};
+
+const verifyStandardWebhookSignature = (
+    rawBody: Buffer,
+    webhookId: string,
+    timestamp: string,
+    signatureHeader: string,
+    secret: string
+): boolean => {
+    const signedContent = `${webhookId}.${timestamp}.${rawBody.toString('utf8')}`;
+    const expectedSignature = crypto
+        .createHmac('sha256', getStandardWebhookSecret(secret))
+        .update(signedContent)
+        .digest('base64');
+
+    return parseStandardWebhookSignatures(signatureHeader).some((signature) => {
+        return timingSafeStringEqual(signature, expectedSignature);
+    });
+};
+
+const verifyLegacyWebhookSignature = (rawBody: Buffer, signature: string, secret: string): boolean => {
+    const expectedSignature = crypto
+        .createHmac('sha256', secret)
+        .update(rawBody)
+        .digest('hex');
+
+    return timingSafeStringEqual(signature, expectedSignature);
+};
+
 /**
  * NOVORIQ REVENUE OS | WHOP BILLING NEXUS
  * ---------------------------------------
@@ -14,12 +67,15 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
 
     try {
         // --- 1. CRYPTOGRAPHIC SIGNATURE VERIFICATION ---
-        const signature = req.headers['x-whop-signature'];
+        const legacySignature = getHeaderValue(req.headers['x-whop-signature']);
+        const standardSignature = getHeaderValue(req.headers['webhook-signature']);
+        const webhookId = getHeaderValue(req.headers['webhook-id']);
+        const webhookTimestamp = getHeaderValue(req.headers['webhook-timestamp']);
         const rawBody = (req as any).rawBody as Buffer | undefined;
-        const secret = process.env.WHOP_WEBHOOK_SECRET;
+        const secret = process.env.WHOP_WEBHOOK_KEY || process.env.WHOP_WEBHOOK_SECRET;
 
         if (!secret) {
-            console.error("[CRITICAL] WHOP_WEBHOOK_SECRET is missing from environment.");
+            console.error("[CRITICAL] WHOP_WEBHOOK_KEY or WHOP_WEBHOOK_SECRET is missing from environment.");
             res.status(500).json({ error: "Server configuration error" });
             return;
         }
@@ -30,22 +86,17 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
             return;
         }
 
-        const signatureValue = Array.isArray(signature) ? signature[0] : signature;
-        if (!signatureValue) {
+        if (!standardSignature && !legacySignature) {
             console.warn("[WARNING] Security Breach: Missing webhook signature.");
             res.status(401).json({ error: "Missing signature" });
             return;
         }
 
-        const expectedSignature = crypto
-            .createHmac('sha256', secret)
-            .update(rawBody)
-            .digest('hex');
-
-        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-        const receivedBuffer = Buffer.from(signatureValue, 'hex');
         const isLocalSignatureBypass = secret === "LOCAL_TEST_SECRET" && process.env.NODE_ENV !== 'production';
-        const isValidSignature = expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+        const isValidStandardSignature = !!(standardSignature && webhookId && webhookTimestamp)
+            && verifyStandardWebhookSignature(rawBody, webhookId, webhookTimestamp, standardSignature, secret);
+        const isValidLegacySignature = !!legacySignature && verifyLegacyWebhookSignature(rawBody, legacySignature, secret);
+        const isValidSignature = isValidStandardSignature || isValidLegacySignature;
 
         if (!isValidSignature && !isLocalSignatureBypass) {
             console.warn("[WARNING] Security Breach: Unauthorized webhook signature mismatch.");
