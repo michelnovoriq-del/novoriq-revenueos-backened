@@ -101,7 +101,7 @@ const handleWhopWebhook = async (req, res) => {
             // 1. DETERMINISTIC TIER MAPPING
             let targetTier = 'PRO'; // Default to Pro
             let expiresAt = null;
-            if (planId === 'plan_V3eDZlxhqz03e') { // 🧪 YOUR TEST PLAN
+            if (planId === 'plan_12uLHFgtctUFl' || planId === 'plan_V3eDZlxhqz03e') { // E2E/test plans
                 targetTier = 'TIER_2'; // Map test plan to Pro for testing
                 console.log("[Whop Protocol] Test Plan Detected. Bypassing commercial locks.");
             }
