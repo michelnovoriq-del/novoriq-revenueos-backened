@@ -265,7 +265,7 @@ export const downloadEvidencePdf = async (req: AuthRequest, res: Response): Prom
     } catch (error) { res.status(500).json({ error: "Server error." }); }
 };
 
-// =========================================================================
+// // =========================================================================
 // --- PHASE 3: MULTI-TENANT DYNAMIC WEBHOOK LISTENER ---
 // =========================================================================
 export const handleStripeWebhook = async (req: Request, res: Response): Promise<void> => {
@@ -319,6 +319,14 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                 const charge = event.data.object;
                 console.log(`[💰] Purchase Recorded: ${charge.id} for Org: ${targetOrgId}`);
 
+                // 🛡️ LAYER 1: STRIPE INTELLIGENCE EXTRACTION
+                const radarScore = charge.outcome?.risk_score ? Number(charge.outcome.risk_score) : null;
+                const threeDSecureStatus = (charge.payment_method_details?.card?.three_d_secure?.result as string) || null;
+                
+                if (radarScore || threeDSecureStatus) {
+                    console.log(`[🛡️] Layer 1 Intel Captured | Radar: ${radarScore} | 3DS: ${threeDSecureStatus}`);
+                }
+
                 await prisma.payment.upsert({
                     where: { stripeChargeId: charge.id as string },
                     update: {}, 
@@ -328,7 +336,11 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                         status: 'succeeded',
                         organizationId: targetOrgId as string, 
                         customerIp: (charge.payment_method_details?.card?.network_transaction_id as string) || null,
-                        location: (charge.billing_details?.address?.country as string) || null
+                        location: (charge.billing_details?.address?.country as string) || null,
+                        
+                        // [NEW] Injecting the 80% Win Rate Data into the Vault
+                        radarScore: radarScore,
+                        threeDSecureStatus: threeDSecureStatus
                     }
                 });
 
@@ -380,7 +392,11 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                     customerIp: paymentRecord.customerIp || evidenceRecord?.ipAddress || 'N/A',
                     location: paymentRecord.location || evidenceRecord?.geoData || 'N/A',
                     cvcCheck: 'Match', 
-                    avsCheck: 'Match'
+                    avsCheck: 'Match',
+                    
+                    // 🛠️ SLEDGEHAMMER FIX 3: Force TypeScript to accept the newly added schema fields
+                    radarScore: (paymentRecord as any).radarScore || 'N/A',
+                    threeDSecureStatus: (paymentRecord as any).threeDSecureStatus || 'Not Authenticated'
                 };
 
                 const pdfPath = await generateCompellingEvidence(evidencePayload);

@@ -110,6 +110,7 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
         const data = payload.data || {};
 
         console.log("[DEBUG PAYLOAD] Whop Data:", JSON.stringify(data, null, 2));
+        console.log(`[DEBUG ACTION] Whop fired action: ${action}`);
 
         // --- 3. PATH A: ACCESS PROVISIONING ---
         if (action === 'membership.went_active' || action === 'membership.went_valid' || action === 'payment.succeeded') {

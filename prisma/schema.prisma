@@ -9,35 +9,39 @@ datasource db {
 }
 
 model Organization {
-  id                 String    @id @default(uuid())
-  name               String
-  whopSubscriptionId String?   @unique 
-  tier               String    @default("INACTIVE") 
-  status             String    @default("INACTIVE")
-  usedPromoCode      String?   
-  accessExpiresAt    DateTime? 
-  
+  id                     String    @id @default(uuid())
+  name                   String
+  whopSubscriptionId     String?   @unique
+  tier                   String    @default("INACTIVE")
+  status                 String    @default("INACTIVE")
+  usedPromoCode          String?
+  accessExpiresAt        DateTime?
+
   // Performance & Tracking
-  revenueRecovered   Int       @default(0) 
-  performanceFeeOwed Int       @default(0) 
-  pdfsGenerated      Int       @default(0)
-  
+  revenueRecovered       Int       @default(0)
+  performanceFeeOwed     Int       @default(0)
+  pdfsGenerated          Int       @default(0)
+
   // The AES-256 Vault & Handshake Secrets
   encryptedStripeKey     String?
-  encryptedWebhookSecret String?   // <--- UPDATED: Renamed to ensure we encrypt it in the vault
+  encryptedWebhookSecret String?
+
+  users                  User[]
+  payments               Payment[]
+  disputes               Dispute[]
   
-  users              User[]
-  payments           Payment[]
-  disputes           Dispute[]
-  createdAt          DateTime  @default(now())
+  // [NEW] Added to link Proof of Value logs to the Organization
+  auditTrails            AuditTrail[] 
+  
+  createdAt              DateTime  @default(now())
 }
 
 model User {
   id             String       @id @default(uuid())
   email          String       @unique
-  passwordHash   String       
+  passwordHash   String
   status         String       @default("ACTIVE")
-  role           String       @default("USER") 
+  role           String       @default("USER")
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt      DateTime     @default(now())
@@ -45,47 +49,51 @@ model User {
 }
 
 model Payment {
-  id                String       @id @default(uuid())
-  stripeChargeId    String       @unique
-  amount            Int          
-  status            String       
-  
+  id                 String       @id @default(uuid())
+  stripeChargeId     String       @unique
+  amount             Int
+  status             String
+
   // Fingerprint & IP Data (The Golden Trio)
-  customerIp        String?
-  deviceFingerprint String?
-  location          String?
-  
-  organizationId    String
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  disputes          Dispute[]
-  createdAt         DateTime     @default(now())
+  customerIp         String?
+  deviceFingerprint  String?
+  location           String?
+
+  // [NEW] Stripe Intelligence (Layer 1 - The 80% Win Rate Data)
+  radarScore         Int?
+  threeDSecureStatus String?
+
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  disputes           Dispute[]
+  createdAt          DateTime     @default(now())
   @@index([organizationId])
 }
 
 model Dispute {
-  id               String       @id @default(uuid())
-  stripeId         String       @unique
-  reason           String       
-  status           String       
-  processingStatus String       @default("PENDING")
-  evidencePdfUrl   String?      
-  
-  paymentId        String
-  payment          Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  organizationId   String
-  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt        DateTime     @default(now())
+  id                 String       @id @default(uuid())
+  stripeId           String       @unique
+  reason             String
+  status             String
+  processingStatus   String       @default("PENDING")
+  evidencePdfUrl     String?
+
+  paymentId          String
+  payment            Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt          DateTime     @default(now())
   @@index([organizationId])
   @@index([processingStatus])
 }
 
 model TrackingIntel {
-  id                String   @id @default(uuid())
-  stripeSessionId   String   @unique
-  ipAddress         String
-  geolocation       String?
-  deviceFingerprint String
-  createdAt         DateTime @default(now())
+  id                 String   @id @default(uuid())
+  stripeSessionId    String   @unique
+  ipAddress          String
+  geolocation        String?
+  deviceFingerprint  String
+  createdAt          DateTime @default(now())
 }
 
 model PreRecordedEvidence {
@@ -100,6 +108,18 @@ model PreRecordedEvidence {
   createdAt      DateTime @default(now())
 }
 
+// [NEW] 1. Added the AuditTrail model to track PROOF OF VALUE
+model AuditTrail {
+  id             String       @id @default(uuid())
+  organizationId String
+  actionType     String       // e.g., "REPORT_GENERATED", "CSV_EXPORT"
+  description    String?
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@index([organizationId])
+}
+
 model InviteCode {
   id            String   @id @default(uuid())
   code          String   @unique
@@ -107,5 +127,5 @@ model InviteCode {
   isUsed        Boolean  @default(false)
   assignedEmail String?  // Optional: lock code to the buyer's email
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime @updatedAt // [FIXED] Removed the syntax error "@Pro"
 }
