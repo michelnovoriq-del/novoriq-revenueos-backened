@@ -113,7 +113,8 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
         console.log(`[DEBUG ACTION] Whop fired action: ${action}`);
 
         // --- 3. PATH A: ACCESS PROVISIONING ---
-        if (action === 'membership.went_active' || action === 'membership.went_valid' || action === 'payment.succeeded') {
+        // 🛠️ THE FIX: Added 'membership.activated' to the switch condition
+        if (action === 'membership.went_active' || action === 'membership.went_valid' || action === 'payment.succeeded' || action === 'membership.activated') {
             
             // PRIORITY: Use external_id (passed via query param) or fallback to metadata
             let orgId = data.external_id || data.metadata?.organizationId;
