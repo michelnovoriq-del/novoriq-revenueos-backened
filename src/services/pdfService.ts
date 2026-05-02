@@ -88,7 +88,7 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                         <tr>
                             <td class="label">3D Secure Protocol Status</td>
                             <td class="value">
-                                ${data.threeDSecureStatus === 'authenticated' || data.threeDSecureStatus === 'Y' || data.threeDSecureStatus?.toLowerCase().includes('auth')
+                                ${data.threeDSecureStatus === 'authenticated' || data.threeDSecureStatus === 'attempt_acknowledged'
                                     ? '<span class="kill-shot">✓ AUTHENTICATED (LIABILITY SHIFT ACTIVE)</span>' 
                                     : '<span class="mono" style="color: #64748b;">' + (data.threeDSecureStatus || 'Not Requested / Unavailable') + '</span>'}
                             </td>
