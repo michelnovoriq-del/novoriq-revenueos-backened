@@ -63,6 +63,11 @@ model Payment {
   radarScore         Int?
   threeDSecureStatus String?
 
+  // --- 🧠 NOVORIQ AI INTELLIGENCE (LAYER 2) ---
+  trustScore         Int?         
+  alertLevel         String?      
+  aiRecommendation   String?      
+
   organizationId     String
   organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   disputes           Dispute[]
@@ -127,5 +132,14 @@ model InviteCode {
   isUsed        Boolean  @default(false)
   assignedEmail String?  // Optional: lock code to the buyer's email
   createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt // [FIXED] Removed the syntax error "@Pro"
+  updatedAt     DateTime @updatedAt 
+}
+
+// [NEW] Double-Billing & Webhook Idempotency Guard
+model ProcessedWebhook {
+  id        String   @id @default(uuid())
+  eventId   String   @unique // The unique Stripe/Whop event ID
+  createdAt DateTime @default(now())
+
+  @@index([eventId])
 }

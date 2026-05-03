@@ -6,7 +6,8 @@ import crypto from 'crypto';
 import Stripe from 'stripe';
 import fs from 'fs';
 import path from 'path';
-import { generateCompellingEvidence } from '../services/pdfService'; 
+// 🛠️ THE FIX: Added generatePOVReport to the import
+import { generateCompellingEvidence, generatePOVReport } from '../services/pdfService'; 
 
 const prisma = new PrismaClient();
 
@@ -114,8 +115,8 @@ const triggerHistoricalSync = async (orgId: string, stripeKey: string): Promise<
 // =========================================================================
 export const connectStripeKey = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const orgId = req.user?.organizationId as string; // FIXED TYPE
-        const stripeSecretKey = req.body.stripeSecretKey as string; // FIXED TYPE
+        const orgId = req.user?.organizationId as string; 
+        const stripeSecretKey = req.body.stripeSecretKey as string; 
 
         if (!stripeSecretKey || !orgId) {
             res.status(400).json({ error: "Missing required fields." }); 
@@ -180,7 +181,7 @@ export const connectStripeKey = async (req: AuthRequest, res: Response): Promise
 
 export const getMetrics = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const orgId = req.user?.organizationId as string; // FIXED TYPE
+        const orgId = req.user?.organizationId as string; 
         const org = await prisma.organization.findUnique({ where: { id: orgId } });
         
         if (!org) {
@@ -238,7 +239,7 @@ export const getMetrics = async (req: AuthRequest, res: Response): Promise<void>
 
 export const getDisputes = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const orgId = req.user?.organizationId as string; // FIXED TYPE
+        const orgId = req.user?.organizationId as string; 
         const disputes = await prisma.dispute.findMany({ 
             where: { organizationId: orgId }, include: { payment: true }, orderBy: { createdAt: 'desc' }, take: 50 
         });
@@ -248,8 +249,8 @@ export const getDisputes = async (req: AuthRequest, res: Response): Promise<void
 
 export const downloadEvidencePdf = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-        const orgId = req.user?.organizationId as string; // FIXED TYPE
-        const disputeId = req.params.id as string; // FIXED TYPE
+        const orgId = req.user?.organizationId as string; 
+        const disputeId = req.params.id as string; 
         
         if (!disputeId || typeof disputeId !== 'string') { 
             res.status(400).json({ error: "Invalid Dispute ID format." }); 
@@ -263,6 +264,80 @@ export const downloadEvidencePdf = async (req: AuthRequest, res: Response): Prom
         if (fs.existsSync(filePath)) { res.download(filePath, `Novoriq_Evidence_${dispute.stripeId}.pdf`); } 
         else { res.status(404).json({ error: "File missing from disk." }); }
     } catch (error) { res.status(500).json({ error: "Server error." }); }
+};
+
+// =========================================================================
+// --- 📊 PHASE 4: PROOF OF VALUE (POV) DASHBOARD DOWNLOAD ---
+// =========================================================================
+export const downloadPOVReport = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const orgId = req.user?.organizationId as string; 
+
+        // 1. Get the 1st day of the current month
+        const startOfMonth = new Date();
+        startOfMonth.setDate(1);
+        startOfMonth.setHours(0, 0, 0, 0);
+
+        // 2. Fetch Organization and current month's transactions
+        const org = await prisma.organization.findUnique({
+            where: { id: orgId },
+            include: {
+                payments: {
+                    where: { createdAt: { gte: startOfMonth } }
+                }
+            }
+        });
+
+        if (!org) {
+            res.status(404).json({ error: "Organization not found." });
+            return;
+        }
+
+        // 3. Engineer the Metrics
+        let totalVolumeCents = 0;
+        let criticalThreatsBlocked = 0;
+        let capitalProtectedCents = 0;
+        const threatLog: Array<{ chargeId: string, amountCents: number, trustScore: number, recommendation: string }> = [];
+
+        org.payments.forEach(payment => {
+            totalVolumeCents += payment.amount;
+            if (payment.alertLevel === 'CRITICAL_WARNING') {
+                criticalThreatsBlocked += 1;
+                capitalProtectedCents += payment.amount;
+                threatLog.push({
+                    chargeId: payment.stripeChargeId,
+                    amountCents: payment.amount,
+                    trustScore: payment.trustScore || 0,
+                    recommendation: payment.aiRecommendation || 'Highly suspicious fingerprint. Review immediately.'
+                });
+            }
+        });
+
+        const povData = {
+            organizationId: org.id,
+            organizationName: org.name,
+            totalVolumeCents,
+            criticalThreatsBlocked,
+            capitalProtectedCents,
+            threatLog
+        };
+
+        console.log(`[📄] Compiling Proof of Value PDF for Org: ${orgId}`);
+
+        // 4. Generate the PDF via Puppeteer
+        const filePath = await generatePOVReport(povData);
+
+        // 5. Serve the Download
+        if (fs.existsSync(filePath)) {
+            res.download(filePath, `Novoriq_POV_${org.name.replace(/\s+/g, '_')}_Monthly.pdf`);
+        } else {
+            res.status(404).json({ error: "File missing from disk after generation." });
+        }
+
+    } catch (error) {
+        console.error("[❌] Server Error generating POV Report:", error);
+        res.status(500).json({ error: "Failed to generate monthly report." });
+    }
 };
 
 // // =========================================================================

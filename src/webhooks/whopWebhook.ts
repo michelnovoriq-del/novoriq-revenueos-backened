@@ -57,6 +57,31 @@ const verifyLegacyWebhookSignature = (rawBody: Buffer, signature: string, secret
     return timingSafeStringEqual(signature, expectedSignature);
 };
 
+// --- 📣 NEW: ESCALATION MATRIX BROADCASTER ---
+const sendCriticalFraudAlert = async (
+    clientWebhookUrl: string, 
+    customerEmail: string, 
+    trustScore: number, 
+    recommendation: string
+): Promise<void> => {
+    if (!clientWebhookUrl) return;
+
+    const payload = {
+        content: `🚨 **CRITICAL FRAUD WARNING: Novoriq Intelligence Node** 🚨\n\n**Target Account:** \`${customerEmail}\`\n**Trust Score:** \`${trustScore}/100\`\n\n**AI Recommendation:**\n> ${recommendation}\n\n*Please review this transaction immediately in your Novoriq Dashboard.*`
+    };
+
+    try {
+        await fetch(clientWebhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        console.log(`[📣] Critical alert broadcasted successfully for ${customerEmail}`);
+    } catch (error) {
+        console.error(`[❌] Failed to broadcast alert:`, error);
+    }
+};
+
 /**
  * NOVORIQ REVENUE OS | WHOP BILLING NEXUS
  * ---------------------------------------
@@ -108,15 +133,31 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
         const payload = req.body;
         const action = payload.action || payload.type;
         const data = payload.data || {};
+        
+        // --- 🛡️ 3. THE DOUBLE-BILLING GUARD ---
+        const eventId = data.id || webhookId; 
+        
+        if (eventId) {
+            try {
+                await prisma.processedWebhook.create({
+                    data: { eventId: eventId },
+                });
+            } catch (error: any) {
+                if (error.code === 'P2002') {
+                    console.log(`[⚠️] Double-Billing Guard Activated. Ignored duplicate Whop event: ${eventId}`);
+                    res.status(200).json({ status: "skipped", reason: "duplicate_event" });
+                    return; 
+                }
+                throw error; 
+            }
+        }
 
         console.log("[DEBUG PAYLOAD] Whop Data:", JSON.stringify(data, null, 2));
         console.log(`[DEBUG ACTION] Whop fired action: ${action}`);
 
-        // --- 3. PATH A: ACCESS PROVISIONING ---
-        // 🛠️ THE FIX: Added 'membership.activated' to the switch condition
+        // --- 4. PATH A: ACCESS PROVISIONING ---
         if (action === 'membership.went_active' || action === 'membership.went_valid' || action === 'payment.succeeded' || action === 'membership.activated') {
             
-            // PRIORITY: Use external_id (passed via query param) or fallback to metadata
             let orgId = data.external_id || data.metadata?.organizationId;
             const userId = data.metadata?.userId; 
             const subscriptionId = data.id;
@@ -126,31 +167,29 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
             console.log(`[Whop Protocol] Capital Secured | Plan ID: ${planId} | Email: ${customerEmail}`);
 
             // 1. DETERMINISTIC TIER MAPPING
-            let targetTier = 'PRO'; // Default to Pro
+            let targetTier = 'PRO'; 
             let expiresAt: Date | null = null;
 
-            // [UPDATED] Injecting the new E2E test plan (plan_rUbJAjG7Mt0mv) alongside existing legacy test IDs
             if (planId === 'plan_rUbJAjG7Mt0mv' || planId === 'plan_12uLHFgtctUFl' || planId === 'plan_V3eDZlxhqz03e') { 
-                targetTier = 'TIER_2'; // Map test plan to Pro for testing
+                targetTier = 'TIER_2'; 
                 console.log("[Whop Protocol] Test Plan Detected. Bypassing commercial locks.");
-            } else if (planId === 'plan_g5k8i3tfPkASV') { // $10 Beta
+            } else if (planId === 'plan_g5k8i3tfPkASV') { 
                 targetTier = 'TRIAL';
                 expiresAt = new Date();
                 expiresAt.setHours(expiresAt.getHours() + 48);
-            } else if (planId === 'plan_pJpWvIqcYCRvV') { // $199
+            } else if (planId === 'plan_pJpWvIqcYCRvV') { 
                 targetTier = 'TIER_1';
-            } else if (planId === 'plan_rE4Rj9g9t8RNH') { // $399
+            } else if (planId === 'plan_rE4Rj9g9t8RNH') { 
                 targetTier = 'TIER_2';
-            } else if (planId === 'plan_My5qZYNCRlcgr') { // $799
+            } else if (planId === 'plan_My5qZYNCRlcgr') { 
                 targetTier = 'TIER_3';
             }
 
-            // 2. GENERATE VIP INVITE KEY (Legacy/Offline fallback)
+            // 2. GENERATE VIP INVITE KEY
             const rawCode = crypto.randomBytes(4).toString('hex').toUpperCase();
             const inviteCode = `NVQ-${rawCode}-VIP`;
 
             // --- 🚨 THE EMAIL BRIDGE (NEW FALLBACK) ---
-            // If Whop strips the external_id, bridge the identity using the verified email
             if (!orgId && customerEmail && customerEmail !== 'unknown@whop.com') {
                 const existingUser = await prisma.user.findUnique({ 
                     where: { email: customerEmail } 
@@ -162,7 +201,6 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
             }
 
             // 3. ATOMIC UPGRADE
-            // If we don't have an OrgId but have a UserId, resolve the OrgId
             if (!orgId && userId) {
                 const user = await prisma.user.findUnique({ where: { id: userId } });
                 if (user) orgId = user.organizationId;
@@ -177,7 +215,7 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
                         where: { id: orgId },
                         data: { 
                             tier: targetTier, 
-                            status: 'ACTIVE', // 🔓 THE MASTER KEY
+                            status: 'ACTIVE', 
                             whopSubscriptionId: subscriptionId, 
                             accessExpiresAt: expiresAt 
                         }
@@ -190,9 +228,77 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
                 });
                 console.log(`[Whop Protocol] Cold traffic detected. Invite code ${inviteCode} mailed to ${customerEmail}.`);
             }
+
+            // --- 🧠 4.5 SILENT COPILOT RISK ASSESSMENT & MEMORY LOGGING ---
+            try {
+                const pythonServerUrl = process.env.PYTHON_NODE_URL || 'http://127.0.0.1:8000';
+                const paymentAmount = data.price || data.plan?.price || 1000; 
+
+                const riskResponse = await fetch(`${pythonServerUrl}/api/v1/analyze-risk`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-internal-key': process.env.INTERNAL_API_KEY || 'nvq_internal_super_secret_key_123',
+                    },
+                    body: JSON.stringify({
+                        transaction_id: eventId,
+                        amount: paymentAmount,
+                        customer_history_count: 0 
+                    })
+                });
+
+                if (riskResponse.ok) {
+                    const riskData = await riskResponse.json();
+                    
+                    if (riskData.status !== "skipped" && riskData.evaluation) {
+                        const evaluation = riskData.evaluation;
+                        console.log(`[🧠] AI Risk Assessment: ${evaluation.alert_level} (${evaluation.trust_score}/100)`);
+
+                        if (evaluation.alert_level === 'CRITICAL_WARNING') {
+                            const clientWebhookUrl = process.env.TEST_DISCORD_WEBHOOK_URL; 
+                            if (clientWebhookUrl) {
+                                await sendCriticalFraudAlert(clientWebhookUrl, customerEmail, evaluation.trust_score, evaluation.recommendation);
+                            } else {
+                                console.log(`[⚠️] Alert suppressed: TEST_DISCORD_WEBHOOK_URL not configured in .env`);
+                            }
+                        }
+
+                        // 🗄️ THE DASHBOARD MEMORY: Log the payment AND the AI's intelligence
+                        if (orgId) {
+                            await prisma.payment.create({
+                                data: {
+                                    stripeChargeId: eventId,
+                                    amount: paymentAmount,
+                                    status: 'succeeded',
+                                    organizationId: orgId,
+                                    trustScore: evaluation.trust_score,
+                                    alertLevel: evaluation.alert_level,
+                                    aiRecommendation: evaluation.recommendation
+                                }
+                            });
+                            console.log(`[🗄️] Payment and AI Risk Intelligence committed to database for Org: ${orgId}`);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.log(`[⚠️] AI Risk Engine unreachable. Transaction processed normally.`);
+                // Fallback: If Python is down, still log the successful payment (without AI data)
+                if (orgId) {
+                    const paymentAmount = data.price || data.plan?.price || 1000; 
+                    await prisma.payment.create({
+                        data: {
+                            stripeChargeId: eventId,
+                            amount: paymentAmount,
+                            status: 'succeeded',
+                            organizationId: orgId,
+                        }
+                    });
+                    console.log(`[🗄️] Standard Payment committed to database for Org: ${orgId} (Without AI Intelligence)`);
+                }
+            }
         }
 
-        // --- 4. PATH B: ACCESS REVOCATION ---
+        // --- 5. PATH B: ACCESS REVOCATION ---
         if (action === 'membership.went_invalid') {
             const orgId = data.external_id || data.metadata?.organizationId;
             if (orgId) {
@@ -201,6 +307,35 @@ export const handleWhopWebhook = async (req: Request, res: Response): Promise<vo
                     data: { status: 'INACTIVE', tier: 'INACTIVE', accessExpiresAt: null }
                 });
                 console.log(`[⚠️] ENGINE LOCKED | Access revoked for Org: ${orgId}`);
+            }
+        }
+        
+        // --- 🧠 6. PATH C: THE PYTHON AI CHURN GUARD ---
+        if (action === 'payment.failed') {
+            const orgId = data.external_id || data.metadata?.organizationId || 'org_unknown';
+            const customerEmail = data.email || data.user?.email || 'unknown@whop.com';
+            
+            console.log(`[🧠] Payment Failed for ${customerEmail}. Bridging to Python Intelligence Node...`);
+            
+            try {
+                const pythonServerUrl = process.env.PYTHON_NODE_URL || 'http://127.0.0.1:8000';
+                
+                await fetch(`${pythonServerUrl}/api/v1/trigger-churn-guard`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-internal-key': process.env.INTERNAL_API_KEY || 'nvq_internal_super_secret_key_123',
+                    },
+                    body: JSON.stringify({
+                        organization_id: orgId,
+                        customer_email: customerEmail,
+                        decline_code: data.decline_code || "insufficient_funds", 
+                        days_until_expiration: 0
+                    })
+                });
+                console.log(`[✅] Payload successfully forwarded to Python Node.`);
+            } catch (bridgeError) {
+                console.error(`[❌] Failed to contact Python Intelligence Node:`, bridgeError);
             }
         }
 
