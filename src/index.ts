@@ -11,6 +11,7 @@ import adminRoutes from './routes/adminRoutes';
 import trackingRoutes from './routes/trackingRoutes';
 import promoRoutes from './routes/promoRoutes'; 
 import billingRoutes from './routes/billingRoutes';
+import auditRoutes from './routes/auditRoutes'; // [NEW] Import audit routes
 
 dotenv.config();
 
@@ -19,23 +20,23 @@ const PORT = process.env.PORT || 3000;
 
 app.use(helmet()); 
 
-// [FIXED] Updated to include your actual live production URL
+// [UPDATED] Added your new separate landing page URL to CORS
 const allowedOrigins = [
     'http://localhost:3000',
-    'https://novoriqrevenueos.netlify.app', // Your actual live frontend
-    'https://novoriq-dashboard.netlify.app', // Backup legacy URL
-    'https://novoriqrevenueosapi.onrender.com' // Allow the API to talk to itself
+    'https://novoriqrevenueos.netlify.app', 
+    'https://novoriq-dashboard.netlify.app', 
+    'https://novoriqrevenueosapi.onrender.com',
+    'https://your-new-landing-page.netlify.app' // [FIX] Add your separate marketing app URL here
 ];
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps, Stripe/Whop webhooks, or curl)
         if (!origin) return callback(null, true);
         
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
-            console.error(`[CORS Blocked] Unauthorized origin attempted access: ${origin}`);
+            console.error(`[CORS Blocked] Unauthorized origin: ${origin}`);
             callback(new Error('CORS origin denied by Revenue OS policy'));
         }
     },
@@ -51,13 +52,13 @@ app.use(cors({
     ]
 }));
 
-// 1. STRIPE RAW EXEMPTION (Runs first to completely bypass JSON parsing for Stripe)
+// 1. STRIPE RAW EXEMPTION
 app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeRoutes);
 
-// 2. UNIVERSAL RAW BODY BUFFER FIX (For Whop and everything else)
+// 2. UNIVERSAL RAW BODY BUFFER FIX
 app.use(express.json({
     verify: (req: any, res, buf) => {
-        req.rawBody = buf; // Saves the exact incoming bytes before Express touches them
+        req.rawBody = buf; 
     }
 }));
 
@@ -69,6 +70,7 @@ app.use('/api/billing', billingRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/track', trackingRoutes); 
 app.use('/api/promo', promoRoutes); 
+app.use('/api/audit', auditRoutes); // [NEW] Public audit endpoint
 
 app.get('/health', (req: Request, res: Response) => {
     res.status(200).json({ status: 'Jade Dynasty Engine Online.' });
