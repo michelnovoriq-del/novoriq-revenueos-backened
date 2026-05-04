@@ -26,7 +26,7 @@ const allowedOrigins = [
     'https://novoriqrevenueos.netlify.app', 
     'https://novoriq-dashboard.netlify.app', 
     'https://novoriqrevenueosapi.onrender.com',
-    'https://https://novoriqrevenuerecoveryos.netlify.app/' // [FIX] Add your separate marketing app URL here
+    'https://novoriqrevenuerecoveryos.netlify.app/' // [FIX] Add your separate marketing app URL here
 ];
 
 app.use(cors({
