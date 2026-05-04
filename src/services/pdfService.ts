@@ -35,6 +35,15 @@ export interface POVData {
     }>;
 }
 
+const escapeHtml = (value: unknown): string => {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+};
+
 export const generateCompellingEvidence = async (data: EvidenceData): Promise<string> => {
     let browser;
     try {
@@ -45,6 +54,23 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
         const isAvsMatch = data.avsCheck?.toLowerCase().includes('match');
         const isCvcMatch = data.cvcCheck?.toLowerCase().includes('match');
         const formattedAmount = (data.amount / 100).toFixed(2);
+        const safeData = {
+            disputeId: escapeHtml(data.disputeId),
+            chargeId: escapeHtml(data.chargeId),
+            reason: escapeHtml(data.reason),
+            date: escapeHtml(data.date),
+            organizationName: escapeHtml(data.organizationName),
+            customerName: escapeHtml(data.customerName || 'Unknown'),
+            customerEmail: escapeHtml(data.customerEmail),
+            billingAddress: escapeHtml(data.billingAddress || 'N/A'),
+            cvcCheck: escapeHtml(data.cvcCheck || 'Not Provided'),
+            avsCheck: escapeHtml(data.avsCheck || 'Not Provided'),
+            customerIp: escapeHtml(data.customerIp || 'Not Captured'),
+            deviceFingerprint: escapeHtml(data.deviceFingerprint || 'Not Captured'),
+            location: escapeHtml(data.location || 'N/A'),
+            radarScore: escapeHtml(data.radarScore !== 'N/A' ? `${data.radarScore}/100` : 'N/A'),
+            threeDSecureStatus: escapeHtml(data.threeDSecureStatus || 'Not Authenticated')
+        };
 
         const htmlContent = `
             <!DOCTYPE html>
@@ -95,8 +121,8 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                         <p>Novoriq Revenue OS • Autonomous Assessment</p>
                     </div>
                     <div class="meta-block">
-                        <div>REF: ${data.disputeId}</div>
-                        <div>NET: ${data.chargeId}</div>
+                        <div>REF: ${safeData.disputeId}</div>
+                        <div>NET: ${safeData.chargeId}</div>
                         <div>GEN: ${new Date().toUTCString()}</div>
                     </div>
                 </div>
@@ -132,11 +158,11 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                 <div class="section-title">Event Timeline</div>
                 <div class="timeline">
                     <div class="timeline-item">
-                        <span class="timeline-date">${data.date}</span>
+                        <span class="timeline-date">${safeData.date}</span>
                         <span class="timeline-desc">Transaction authorized & account provisioned.</span>
                     </div>
                     <div class="timeline-item">
-                        <span class="timeline-date">${data.date}</span>
+                        <span class="timeline-date">${safeData.date}</span>
                         <span class="timeline-desc">Product delivered (Digital Receipt / Access Granted).</span>
                     </div>
                     <div class="timeline-item">
@@ -145,7 +171,7 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                     </div>
                     <div class="timeline-item">
                         <span class="timeline-date">Current</span>
-                        <span class="timeline-desc">Dispute filed ("${data.reason}") bypassing merchant resolution.</span>
+                        <span class="timeline-desc">Dispute filed ("${safeData.reason}") bypassing merchant resolution.</span>
                     </div>
                 </div>
 
@@ -154,19 +180,19 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                 <div class="grid" style="margin-bottom: 0;">
                     <div class="grid-item">
                         <div class="label">CVC Verification</div>
-                        <div class="value"><span class="${isCvcMatch ? 'check' : 'warn'}">${isCvcMatch ? '✔' : '⚠'}</span> ${data.cvcCheck || 'Not Provided'}</div>
+                        <div class="value"><span class="${isCvcMatch ? 'check' : 'warn'}">${isCvcMatch ? '✔' : '⚠'}</span> ${safeData.cvcCheck}</div>
                     </div>
                     <div class="grid-item">
                         <div class="label">Address Verification (AVS)</div>
-                        <div class="value"><span class="${isAvsMatch ? 'check' : 'warn'}">${isAvsMatch ? '✔' : '⚠'}</span> ${data.avsCheck || 'Not Provided'}</div>
+                        <div class="value"><span class="${isAvsMatch ? 'check' : 'warn'}">${isAvsMatch ? '✔' : '⚠'}</span> ${safeData.avsCheck}</div>
                     </div>
                     <div class="grid-item">
                         <div class="label">Stripe Radar Risk Score</div>
-                        <div class="value"><span class="info">ℹ</span> ${data.radarScore !== 'N/A' ? data.radarScore + '/100' : 'N/A'} (Lower is safer)</div>
+                        <div class="value"><span class="info">ℹ</span> ${safeData.radarScore} (Lower is safer)</div>
                     </div>
                     <div class="grid-item">
                         <div class="label">3D Secure Protocol</div>
-                        <div class="value"><span class="info">ℹ</span> ${data.threeDSecureStatus || 'Not Authenticated'}</div>
+                        <div class="value"><span class="info">ℹ</span> ${safeData.threeDSecureStatus}</div>
                     </div>
                 </div>
 
@@ -175,15 +201,15 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                 <div class="grid" style="margin-bottom: 0;">
                     <div class="grid-item">
                         <div class="label">Authorized Customer Name</div>
-                        <div class="value">${data.customerName || 'Unknown'}</div>
+                        <div class="value">${safeData.customerName}</div>
                     </div>
                     <div class="grid-item">
                         <div class="label">Customer Email</div>
-                        <div class="value">${data.customerEmail}</div>
+                        <div class="value">${safeData.customerEmail}</div>
                     </div>
                     <div class="grid-item">
                         <div class="label">Purchasing IP Address</div>
-                        <div class="value">${data.customerIp || 'Not Captured'}</div>
+                        <div class="value">${safeData.customerIp}</div>
                     </div>
                     <div class="grid-item">
                         <div class="label">System Access Records</div>
@@ -191,11 +217,11 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                     </div>
                     <div class="grid-item">
                         <div class="label">Resolved Geographic Location</div>
-                        <div class="value">${data.location || 'N/A'}</div>
+                        <div class="value">${safeData.location}</div>
                     </div>
                     <div class="grid-item">
                         <div class="label">Hardware Fingerprint Hash</div>
-                        <div class="value">${data.deviceFingerprint || 'Not Captured'}</div>
+                        <div class="value">${safeData.deviceFingerprint}</div>
                     </div>
                 </div>
 
@@ -203,7 +229,7 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
                 <div class="section-title">III. Policy Agreement</div>
                 <div style="font-size: 11px; color: #3f3f46;">
                     <div><span class="check">✔</span> <strong>Terms of Service Accepted:</strong> Cardholder agreed to the strictly digital delivery terms at the time of checkout.</div>
-                    <div style="margin-top: 6px;"><span class="check">✔</span> <strong>Clear Billing Descriptor:</strong> The charge appeared clearly on the statement for the associated merchant organization (${data.organizationName}).</div>
+                    <div style="margin-top: 6px;"><span class="check">✔</span> <strong>Clear Billing Descriptor:</strong> The charge appeared clearly on the statement for the associated merchant organization (${safeData.organizationName}).</div>
                 </div>
 
                 <div class="footer">
@@ -256,6 +282,22 @@ export const generateCompellingEvidence = async (data: EvidenceData): Promise<st
 export const generatePOVReport = async (data: POVData): Promise<string> => {
     let browser;
     try {
+        const safeOrganizationName = escapeHtml(data.organizationName);
+        const threatLogHtml = data.threatLog.length === 0
+            ? '<div style="color: #64748b; font-size: 13px; font-style: italic;">No critical threats detected during this cycle.</div>'
+            : data.threatLog.map(threat => `
+                        <div class="threat-item">
+                            <div class="threat-header">
+                                <span class="threat-id">TXN_${escapeHtml(threat.chargeId.substring(0, 12))}...</span>
+                                <span class="threat-amount">At Risk: $${(threat.amountCents / 100).toFixed(2)}</span>
+                            </div>
+                            <div class="threat-details">
+                                <span class="trust-score">TRUST: ${escapeHtml(threat.trustScore)}/100</span>
+                                ${escapeHtml(threat.recommendation)}
+                            </div>
+                        </div>
+                    `).join('');
+
         const htmlContent = `
             <!DOCTYPE html>
             <html>
@@ -291,7 +333,7 @@ export const generatePOVReport = async (data: POVData): Promise<string> => {
                 <div class="document-header">
                     <div class="logo-text">NOVORIQ REVENUE OS</div>
                     <div class="doc-meta">
-                        Client: ${data.organizationName}<br>
+                        Client: ${safeOrganizationName}<br>
                         Cycle: ${new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}<br>
                         Node: Intelligence Layer 2
                     </div>
@@ -317,20 +359,7 @@ export const generatePOVReport = async (data: POVData): Promise<string> => {
 
                 <div class="section-title">Critical Threat Interception Log</div>
                 
-                ${data.threatLog.length === 0 
-                    ? '<div style="color: #64748b; font-size: 13px; font-style: italic;">No critical threats detected during this cycle.</div>' 
-                    : data.threatLog.map(threat => `
-                        <div class="threat-item">
-                            <div class="threat-header">
-                                <span class="threat-id">TXN_${threat.chargeId.substring(0,12)}...</span>
-                                <span class="threat-amount">At Risk: $${(threat.amountCents / 100).toFixed(2)}</span>
-                            </div>
-                            <div class="threat-details">
-                                <span class="trust-score">TRUST: ${threat.trustScore}/100</span>
-                                ${threat.recommendation}
-                            </div>
-                        </div>
-                    `).join('')}
+                ${threatLogHtml}
 
                 <div class="forensic-stamp">
                     X-TRACE-HASH: ${Buffer.from(data.organizationId + Date.now().toString()).toString('hex').substring(0, 32).toUpperCase()} | SECURED BY NOVORIQ

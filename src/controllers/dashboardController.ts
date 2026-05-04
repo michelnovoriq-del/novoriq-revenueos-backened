@@ -12,12 +12,69 @@ import { generateCompellingEvidence, generatePOVReport } from '../services/pdfSe
 const prisma = new PrismaClient();
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_MASTER_KEY;
+const isProduction = process.env.NODE_ENV === 'production';
 
 const MASTER_CODES = [
     'JADE-FOUNDER-2026',
     'NOVO-ELITE-UNLOCK',
     'DYNASTY-DEV-MASTER'
 ];
+
+const getHeaderValue = (header: string | string[] | undefined): string | undefined => {
+    return Array.isArray(header) ? header[0] : header;
+};
+
+const sanitizeDownloadName = (name: string): string => {
+    return name.replace(/[^a-zA-Z0-9._-]/g, '_');
+};
+
+const streamTemporaryPdf = (res: Response, filePath: string, downloadName: string): void => {
+    let cleanedUp = false;
+
+    const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`[✅] Temporary PDF purged: ${path.basename(filePath)}`);
+        }
+    };
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${sanitizeDownloadName(downloadName)}`);
+
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+
+    res.on('finish', cleanup);
+    res.on('close', cleanup);
+
+    fileStream.on('error', (streamErr) => {
+        console.error("[❌] PDF Stream Error:", streamErr);
+        if (!res.headersSent) {
+            res.status(500).json({ error: "Failed to stream PDF." });
+            return;
+        }
+        res.end();
+    });
+};
+
+const isDuplicateStripeEvent = async (eventId: string): Promise<boolean> => {
+    try {
+        await prisma.processedWebhook.create({
+            data: { eventId: `stripe:${eventId}` }
+        });
+        return false;
+    } catch (error: any) {
+        if (error.code === 'P2002') {
+            console.log(`[⚠️] Duplicate Stripe event ignored: ${eventId}`);
+            return true;
+        }
+
+        throw error;
+    }
+};
 
 // --- HELPER: ENCRYPT DATA ---
 const encryptData = (text: string): string => {
@@ -46,6 +103,11 @@ const triggerHistoricalSync = async (orgId: string, stripeKey: string): Promise<
 
         // 🚨 DEV MODE CHEAT CODE: Inject fake data + dummy PDF
         if (stripeKey === 'sk_test_dev_mode') {
+            if (isProduction) {
+                console.warn(`[⚠️] Dev mode Stripe key rejected in production for Org: ${orgId}`);
+                return;
+            }
+
             console.log(`[🛠️] DEV MODE DETECTED: Injecting mock disputes and PDF...`);
             
             const dummyPdfPath = path.resolve('./dummy_evidence.pdf');
@@ -130,6 +192,11 @@ export const connectStripeKey = async (req: AuthRequest, res: Response): Promise
         }
 
         let webhookSecretToVault = null;
+
+        if (stripeSecretKey === 'sk_test_dev_mode' && isProduction) {
+            res.status(400).json({ error: "Dev mode Stripe key is not allowed in production." });
+            return;
+        }
 
         if (stripeSecretKey !== 'sk_test_dev_mode') {
             try {
@@ -325,25 +392,8 @@ export const downloadPOVReport = async (req: AuthRequest, res: Response): Promis
         console.log(`[📄] Compiling Proof of Value PDF for Org: ${orgId}`);
 
         const filePath = await generatePOVReport(povData);
-        const downloadName = `Novoriq_POV_${org.name.replace(/\s+/g, '_')}_Monthly.pdf`;
-
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=${downloadName}`);
-
-        const fileStream = fs.createReadStream(filePath);
-        fileStream.pipe(res);
-
-        fileStream.on('end', () => {
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-                console.log(`[✅] POV report stream complete and temporary file purged.`);
-            }
-        });
-
-        fileStream.on('error', (streamErr) => {
-            console.error("[❌] POV Report Stream Error:", streamErr);
-            res.status(500).end();
-        });
+        const downloadName = `Novoriq_POV_${org.name}_Monthly.pdf`;
+        streamTemporaryPdf(res, filePath, downloadName);
 
     } catch (error) {
         console.error("[❌] POV Report Download Error:", error);
@@ -381,27 +431,8 @@ export const handleGeneratePOV = async (req: Request, res: Response): Promise<vo
             const filePath = await generatePOVReport(povData);
 
             // Set headers for PDF download
-            const downloadName = `Novoriq_POV_${org.name.replace(/\s+/g, '_')}_Monthly.pdf`;
-            
-            res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename=${downloadName}`);
-
-            // Stream the file directly
-            const fileStream = fs.createReadStream(filePath);
-            fileStream.pipe(res);
-
-            fileStream.on('end', () => {
-                // Clean up the temporary file after successful stream
-                if (fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
-                    console.log(`[✅] Stream complete and temporary file purged.`);
-                }
-            });
-
-            fileStream.on('error', (streamErr) => {
-                console.error("[❌] Stream Error:", streamErr);
-                res.status(500).end();
-            });
+            const downloadName = `Novoriq_POV_${org.name}_Monthly.pdf`;
+            streamTemporaryPdf(res, filePath, downloadName);
 
         } catch (pdfError: any) {
             console.error("[❌] PDF Generation/Streaming Failed:", pdfError.message);
@@ -418,8 +449,7 @@ export const handleGeneratePOV = async (req: Request, res: Response): Promise<vo
 // --- PHASE 3: MULTI-TENANT DYNAMIC WEBHOOK LISTENER ---
 // =========================================================================
 export const handleStripeWebhook = async (req: Request, res: Response): Promise<void> => {
-    // 🛠️ SLEDGEHAMMER FIX 1: Force TypeScript to ignore the string[] header warning
-    const sig = req.headers['stripe-signature'] as any; 
+    const sig = getHeaderValue(req.headers['stripe-signature']);
     
     // 1. Extract dynamic ID from URL parameters
     const targetOrgId = req.params.orgId as string; 
@@ -433,6 +463,11 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
     let event: any; 
 
     try {
+        if (!sig) {
+            res.status(400).send("Webhook Error: Missing Stripe signature");
+            return;
+        }
+
         // 2. Look up the specific organization to find their unique secrets
         const org = await prisma.organization.findUnique({ where: { id: targetOrgId } });
         
@@ -460,6 +495,11 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
 
     // 6. Execute Business Logic using the dynamic targetOrgId
     try {
+        if (event.id && await isDuplicateStripeEvent(event.id)) {
+            res.status(200).json({ received: true, skipped: true, reason: "duplicate_event" });
+            return;
+        }
+
         switch (event.type) {
             
             case 'charge.succeeded': {
