@@ -324,13 +324,40 @@ export const downloadPOVReport = async (req: AuthRequest, res: Response): Promis
 
         console.log(`[📄] Compiling Proof of Value PDF for Org: ${orgId}`);
 
+        const filePath = await generatePOVReport(povData);
+        const downloadName = `Novoriq_POV_${org.name.replace(/\s+/g, '_')}_Monthly.pdf`;
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=${downloadName}`);
+
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+
+        fileStream.on('end', () => {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`[✅] POV report stream complete and temporary file purged.`);
+            }
+        });
+
+        fileStream.on('error', (streamErr) => {
+            console.error("[❌] POV Report Stream Error:", streamErr);
+            res.status(500).end();
+        });
+
+    } catch (error) {
+        console.error("[❌] POV Report Download Error:", error);
+        res.status(500).json({ error: "Failed to generate POV report." });
+    }
+};
+
 
 // =========================================================================
 // --- PHASE 4: DYNAMIC REPORT GENERATOR & DOWNLOADER ---
 // =========================================================================
 export const handleGeneratePOV = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { orgId } = req.params;
+        const orgId = req.params.orgId as string;
         const org = await prisma.organization.findUnique({ where: { id: orgId } });
 
         if (!org) {
