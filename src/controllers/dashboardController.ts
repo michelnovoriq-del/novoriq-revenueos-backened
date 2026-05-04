@@ -520,12 +520,22 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                     threeDSecureStatus: (paymentRecord as any).threeDSecureStatus || 'Not Authenticated'
                 };
 
-                const pdfPath = await generateCompellingEvidence(evidencePayload);
+                // 🛠️ THE FIX: Wrap PDF generation in a try/catch so a timeout doesn't kill the database save
+                let pdfPath = null;
+                try {
+                    console.log(`[📄] Attempting to generate PDF dossier...`);
+                    pdfPath = await generateCompellingEvidence(evidencePayload);
+                    console.log(`[✅] PDF Compiled successfully.`);
+                } catch (pdfError: any) {
+                    console.error(`[⚠️] PDF Generation Failed (Likely Render/Puppeteer environment issue):`, pdfError.message);
+                    pdfPath = null; // Proceed without the PDF so the dashboard still updates
+                }
 
+                // Now save to the DB regardless of PDF success
                 await prisma.dispute.upsert({
                     where: { stripeId: dispute.id as string },
                     update: {
-                        processingStatus: 'COMPLETED',
+                        processingStatus: pdfPath ? 'COMPLETED' : 'PDF_FAILED',
                         evidencePdfUrl: pdfPath
                     },
                     create: {
@@ -534,12 +544,12 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                         status: dispute.status as string,
                         paymentId: paymentRecord.id,
                         organizationId: targetOrgId as string, 
-                        processingStatus: 'COMPLETED',
+                        processingStatus: pdfPath ? 'COMPLETED' : 'PDF_FAILED',
                         evidencePdfUrl: pdfPath
                     }
                 });
 
-                console.log(`[✅] PDF Compiled and Saved to Database for Org: ${targetOrgId}`);
+                console.log(`[✅] Dispute saved to Database for Org: ${targetOrgId}`);
                 break;
             }
 
