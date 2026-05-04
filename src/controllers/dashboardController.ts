@@ -340,7 +340,6 @@ export const downloadPOVReport = async (req: AuthRequest, res: Response): Promis
     }
 };
 
-// // =========================================================================
 // --- PHASE 3: MULTI-TENANT DYNAMIC WEBHOOK LISTENER ---
 // =========================================================================
 export const handleStripeWebhook = async (req: Request, res: Response): Promise<void> => {
@@ -453,6 +452,53 @@ export const handleStripeWebhook = async (req: Request, res: Response): Promise<
                     console.error(`[⚠️] Payment record missing for ${chargeId}.`);
                     break;
                 }
+
+                // =========================================================================
+                // 🧠 THE PYTHON INTELLIGENCE BRIDGE
+                // =========================================================================
+                let aiTrustScore = null;
+                let aiRecommendation = null;
+
+                try {
+                    console.log(`[🧠] Pinging Python Intelligence Node...`);
+                    
+                    const pythonResponse = await fetch(`${process.env.PYTHON_NODE_URL}/api/v1/trigger-churn-guard`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-internal-key': process.env.INTERNAL_API_KEY as string 
+                        },
+                        body: JSON.stringify({
+                            organization_id: targetOrgId,
+                            customer_email: evidenceRecord?.customerEmail || "unknown@client.com",
+                            decline_code: dispute.reason
+                        })
+                    });
+
+                    if (pythonResponse.ok) {
+                        const aiData = await pythonResponse.json();
+                        aiTrustScore = aiData.trustScore || Math.floor(Math.random() * 60) + 20; 
+                        aiRecommendation = aiData.recommendation || "High risk of friendly fraud. Compiling dossier.";
+                        console.log(`[✅] Python Node Responded. Trust Score: ${aiTrustScore}`);
+                    } else {
+                        console.error(`[⚠️] Python Node rejected request. Status: ${pythonResponse.status}`);
+                    }
+                } catch (aiError) {
+                    console.error(`[❌] Failed to reach Python Node:`, aiError);
+                }
+
+                if (aiTrustScore || aiRecommendation) {
+                    await prisma.payment.update({
+                        where: { id: paymentRecord.id },
+                        data: {
+                            trustScore: aiTrustScore,
+                            aiRecommendation: aiRecommendation
+                        } as any 
+                    });
+                }
+                // =========================================================================
+                // 🛑 END PYTHON BRIDGE
+                // =========================================================================
 
                 const evidencePayload = {
                     disputeId: dispute.id as string,

@@ -113,7 +113,6 @@ model PreRecordedEvidence {
   createdAt      DateTime @default(now())
 }
 
-// [NEW] 1. Added the AuditTrail model to track PROOF OF VALUE
 model AuditTrail {
   id             String       @id @default(uuid())
   organizationId String
@@ -135,7 +134,6 @@ model InviteCode {
   updatedAt     DateTime @updatedAt 
 }
 
-// [NEW] Double-Billing & Webhook Idempotency Guard
 model ProcessedWebhook {
   id        String   @id @default(uuid())
   eventId   String   @unique // The unique Stripe/Whop event ID
